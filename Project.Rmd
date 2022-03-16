@@ -1,0 +1,206 @@
+---
+title: "Stock Market Prediction Using Textual and Numerical Analysis"
+author: "Atmik"
+date: "3/15/2022"
+output:
+  html_document: default
+---
+
+## Using ARIMA Model to Predict the Movement of Stock Market in the Near Future
+
+Importing Libraries
+
+```{r}
+library(tidyverse)
+library(tseries)
+library(forecast)
+library(ggplot2)
+library(caTools)
+library(rpart)
+library(syuzhet)
+library(randomForest)
+```
+
+Reading the file and Data Preprocessing
+
+```{r}
+df <- read.csv(file.choose())
+start <- which(rownames(df) == "January-2012")
+end <- which(rownames(df) == "December-2019")               
+df <- df[start:end,]
+df$MonthsNew <- rownames(df)
+df <- df[,c(4,6)]
+colnames(df) <- c("Close", "Month")
+df<- df[,c(2,1)]
+rownames(df) <- NULL
+df %>% separate(Month, c("Month","Year"), sep = "-" )
+```
+
+Converting into Time Series
+
+```{r}
+ts <- ts(df$Close, freq = 12, start = c(2012, 1), end = c(2019, 12))
+ts
+plot(ts)
+```
+
+Making the Time Series Stationary and Plotting Different Components of Time Series
+
+```{r}
+ts_log <- log(ts)
+plot(ts_log)
+
+decomp <- decompose(ts_log)
+plot(decomp)
+```
+
+Findng the Best Fittting ARIMA Model
+
+```{r}
+model <- auto.arima(ts_log)
+model
+```
+
+Plotting ACF and PACF Graphs for the Best Fittting ARIMA Model
+
+```{r}
+acf(model$residuals)
+pacf(model$residuals)
+
+Box.test(model$residuals, type = 'Ljung-Box')
+adf.test(diff(ts_log))
+
+```
+
+Forecasting and Plotting the Forecast
+
+```{r}
+f <- forecast(model, 12)
+f
+autoplot(f) 
+```
+
+## Using Natural Language Processing to Gauge the Effect of News Headlines on Stock Market
+
+Importing the Dataset
+
+```{r}
+news <- read.csv(file.choose(),stringsAsFactors = F)
+news2 <- news
+```
+
+Data Preprocessing
+
+```{r}
+news$publish_date <- as.Date(as.character(news$publish_date), "%Y%m%d")
+news$headline_category <- NULL
+news <- news[news$publish_date > as.Date("2012-01-01") & news$publish_date < as.Date("2019-12-31"),]
+news <- separate(news, publish_date, c("Year","Month","Day"), "-")
+news$Day <- NULL
+news$time <- paste(news$Month, "-", news$Year) 
+news$Month <- NULL
+news$Year <- NULL
+news2 <- news
+```
+
+Collapsing the Dataframe into Monthly News
+
+```{r}
+news3 <- news %>% group_by(time) %>% summarise(headline_text=paste(headline_text, collapse = " "))
+```
+
+Sentiment Analysis of the News Headlines
+
+```{r}
+text <- as.character(news3$headline_text)
+class(news3$headline_text)
+s <- get_nrc_sentiment(text)
+head(s)
+```
+
+Merging the Stock Closing Index and News Headlines Dataframe
+
+```{r}
+final <- data.frame(df$Month, s, df$Close)
+final$PrevClose[2:96]<- final$df.Close[1:95]
+final$PrevClose[1] <- 15454.92
+final$Change <- (final$df.Close - final$PrevClose)*100/final$PrevClose 
+final$Change <-   round(final$Change, 2)
+final$Class <- ifelse(final$Change > 0, 1 , 0)
+head(final,10)
+```
+
+Feature Selection, Scaling and Factorization
+
+```{r}
+final2 <- final[,c(-1,-12:-14)]
+final2[,1:10] <- scale(final2[,1:10])
+final2$Class <- factor(final2$Class)
+class(final2$Class)
+head(final2)
+```
+
+Splitting Data into Training and Test Data Sets
+
+```{r}
+split <- sample.split(final2$Class, SplitRatio = 0.75)
+training <- subset(final2, split == T)
+test <- subset(final2, split == F)
+colnames(final2)
+```
+
+Logistic Regression Classifier
+
+```{r}
+lr_classifier <- glm(formula = Class ~ . , family = binomial, data = training )
+summary(lr_classifier)
+
+prob <- predict(lr_classifier, type = 'response', newdata = test[-11])
+prob
+y <- ifelse(prob > 0.5, 1, 0)
+y
+```
+
+Confusion Matrix for Logistic Regression Classifier
+
+```{r}
+lr_cm <- table(test$Class, y)
+lr_cm
+```
+
+Decision Tree Classifier
+
+```{r}
+dtclassifier <- rpart(formula = Class ~ . , data = training)
+
+dt_y <- predict(dtclassifier, newdata = test[-11], type = 'class')
+dt_y
+```
+
+Confusion Matrix for Decision Tree Classifier
+
+```{r}
+cm <- table(test$Class, dt_y)
+cm
+```
+
+Random Forest Classifier
+
+```{r}
+rf_classifier <- randomForest(x=training[-11], y=training$Class, ntree = 300)
+
+rf_y <- predict(rf_classifier, newdata = test[-11])
+rf_y
+
+```
+
+Confusion Matrix for Random Forest Classifier
+
+```{r}
+cm <- table(test$Class, rf_y)
+cm
+```
+
+*We see the Random Forest Classifier at 300 trees gives the best output.*
+
+### ------------------------------------------------------------------------------------------------------------------------------------------------------------
